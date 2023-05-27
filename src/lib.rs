@@ -2,13 +2,17 @@ use async_trait::async_trait;
 use token_cognito::{GetAuthInfo, TokenClient};
 
 pub async fn get_token_cache_or_auth(
+    region: &'static str,
+    secrets_manager_id: &str,
     username: &str,
     password: &str,
 ) -> anyhow::Result<&'static (String, String, String)> {
     static mut TOKENS: Option<(String, String, String)> = None;
     unsafe {
         if TOKENS.is_none() {
-            TOKENS = auth(username, password).await.ok();
+            TOKENS = auth(region, secrets_manager_id, username, password)
+                .await
+                .ok();
         }
     }
     unsafe {
@@ -18,18 +22,19 @@ pub async fn get_token_cache_or_auth(
     }
 }
 
-struct GetAuthInfoFromEnv;
+struct GetAuthInfoFromEnv<'a> {
+    region: &'static str,
+    secrets_manager_id: &'a str,
+}
 
 #[async_trait]
-impl GetAuthInfo for GetAuthInfoFromEnv {
-    async fn run(&self) -> anyhow::Result<(String, String, String)> {
+impl<'a> GetAuthInfo<'a> for GetAuthInfoFromEnv<'a> {
+    async fn run(&'a self) -> anyhow::Result<(String, String, String)> {
         use itertools::Itertools as _;
         use secret_env::get_secret_env_values_from_keys;
-        let region = "ap-northeast-1";
-        let secret_name = "SecretsManager";
         let (secret_key, client_id, user_pool_id) = get_secret_env_values_from_keys(
-            region,
-            secret_name,
+            self.region,
+            self.secrets_manager_id,
             vec!["APPLICATION_SECRET", "COGNITO_CLIENT_ID", "USER_POOL_ID"],
         )
         .await?
@@ -40,10 +45,17 @@ impl GetAuthInfo for GetAuthInfoFromEnv {
     }
 }
 
-async fn auth(username: &str, password: &str) -> anyhow::Result<(String, String, String)> {
-    let token_client = TokenClient::builder()
-        .set_getter(Some(&GetAuthInfoFromEnv))
-        .build();
+async fn auth<'a>(
+    region: &'static str,
+    secrets_manager_id: &'a str,
+    username: &'a str,
+    password: &'a str,
+) -> anyhow::Result<(String, String, String)> {
+    let getter = GetAuthInfoFromEnv {
+        region,
+        secrets_manager_id,
+    };
+    let token_client = TokenClient::builder().set_getter(Some(&getter)).build();
 
     let tokens = token_client.run(username, password).await?;
 
