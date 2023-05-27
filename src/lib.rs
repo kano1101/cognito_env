@@ -4,15 +4,22 @@ use token_cognito::{GetAuthInfo, TokenClient};
 pub async fn get_token_cache_or_auth(
     region: &'static str,
     secrets_manager_id: &str,
+    envs: &[&str; 3],
     username: &str,
     password: &str,
 ) -> anyhow::Result<&'static (String, String, String)> {
     static mut TOKENS: Option<(String, String, String)> = None;
     unsafe {
         if TOKENS.is_none() {
-            TOKENS = auth(region, secrets_manager_id, username, password)
-                .await
-                .ok();
+            TOKENS = auth(
+                region,
+                secrets_manager_id,
+                envs.to_vec(),
+                username,
+                password,
+            )
+            .await
+            .ok();
         }
     }
     unsafe {
@@ -25,6 +32,7 @@ pub async fn get_token_cache_or_auth(
 struct GetAuthInfoFromEnv<'a> {
     region: &'static str,
     secrets_manager_id: &'a str,
+    envs: Vec<&'a str>,
 }
 
 #[async_trait]
@@ -35,7 +43,7 @@ impl<'a> GetAuthInfo<'a> for GetAuthInfoFromEnv<'a> {
         let (secret_key, client_id, user_pool_id) = get_secret_env_values_from_keys(
             self.region,
             self.secrets_manager_id,
-            vec!["APPLICATION_SECRET", "COGNITO_CLIENT_ID", "USER_POOL_ID"],
+            self.envs.clone(),
         )
         .await?
         .into_iter()
@@ -48,12 +56,14 @@ impl<'a> GetAuthInfo<'a> for GetAuthInfoFromEnv<'a> {
 async fn auth<'a>(
     region: &'static str,
     secrets_manager_id: &'a str,
+    envs: Vec<&'a str>,
     username: &'a str,
     password: &'a str,
 ) -> anyhow::Result<(String, String, String)> {
     let getter = GetAuthInfoFromEnv {
         region,
         secrets_manager_id,
+        envs,
     };
     let token_client = TokenClient::builder().set_getter(Some(&getter)).build();
 
